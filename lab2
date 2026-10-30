@@ -148,7 +148,6 @@ int main() {
 
     t_notify.join();
 
-    // Розбудимо решту потоків для коректного завершення main
     cv.notify_all();
 
     t1.join();
