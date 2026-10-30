@@ -1,1 +1,421 @@
+//ПУНКТ 1.2.1
+
+#include <iostream>
+#include <thread>
+#include <queue>
+#include <mutex>
+#include <chrono>
+
+std::queue<int> data_queue;
+std::mutex m;
+bool data_ready = false;
+
+bool is_prime(int n) {
+    if (n <= 1) return false;
+    for (int i = 2; i * i <= n; ++i) {
+        if (n % i == 0) return false;
+    }
+    return true;
+}
+
+void DataPreparation() {
+    std::cout << "[DataPreparation] Введіть числа (-1 для завершення):\n";
+    int num;
+    while (std::cin >> num && num != -1) {
+        std::lock_guard<std::mutex> lock(m);
+        data_queue.push(num);
+    }
+    {
+        std::lock_guard<std::mutex> lock(m);
+        data_ready = true;
+    }
+}
+
+void DataProcessing() {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lk(m);
+            if (!data_ready) {
+                lk.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+        }
+        break;
+    }
+
+    std::lock_guard<std::mutex> lk(m);
+    std::cout << "[DataProcessing] Прості числа з черги: ";
+    while (!data_queue.empty()) {
+        int val = data_queue.front();
+        data_queue.pop();
+        if (is_prime(val)) {
+            std::cout << val << " ";
+        }
+    }
+    std::cout << "\n";
+}
+
+int main() {
+    std::thread t_prep(DataPreparation);
+    t_prep.detach();
+
+    DataProcessing();
+
+    return 0;
+}
+
+
+// ПУНКТ 1.2.2
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+
+std::mutex m;
+std::condition_variable cv;
+int i = 0;
+
+void Waits(int id) {
+    std::unique_lock<std::mutex> lk(m);
+    std::cout << "Потік " << id << " входить у стан очікування.\n";
+    cv.wait(lk, [] { return i == 1; });
+    std::cout << "Потік " << id << ": очікування завершене!\n";
+}
+
+void Awake() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "[Awake] Перше повідомлення notify_all() (при i = 0)...\n";
+    cv.notify_all();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        std::lock_guard<std::mutex> lk(m);
+        i = 1;
+    }
+    std::cout << "[Awake] Присвоєно i = 1, повторне повідомлення notify_all()...\n";
+    cv.notify_all();
+}
+
+int main() {
+    std::thread w1(Waits, 1);
+    std::thread w2(Waits, 2);
+    std::thread w3(Waits, 3);
+    std::thread a(Awake);
+
+    a.join();
+    w1.join();
+    w2.join();
+    w3.join();
+
+    return 0;
+}
+
+// ПУНКТ 1.2.3
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+
+std::mutex m;
+std::condition_variable cv;
+int i = 0;
+
+void ThreadFunc(int id) {
+    std::unique_lock<std::mutex> lk(m);
+    std::cout << "Потік " << id << " чекає...\n";
+    cv.wait(lk, [] { return i == 1; });
+    std::cout << "Повідомлення з потоку " << id << "\n";
+}
+
+void NotifyThread() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        std::lock_guard<std::mutex> lk(m);
+        i = 1;
+    }
+    std::cout << "[Notify] Виклик notify_one()\n";
+    cv.notify_one();
+}
+
+int main() {
+    std::thread t1(ThreadFunc, 1);
+    std::thread t2(ThreadFunc, 2);
+    std::thread t3(ThreadFunc, 3);
+    std::thread t_notify(NotifyThread);
+
+    t_notify.join();
+
+    // Розбудимо решту потоків для коректного завершення main
+    cv.notify_all();
+
+    t1.join();
+    t2.join();
+    t3.join();
+
+    return 0;
+}
+
+// ПУНКТ 1.2.4 
+#include <iostream>
+#include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+
+std::queue<int> data_queue;
+std::mutex m;
+std::condition_variable cv;
+bool done = false;
+
+bool is_prime(int n) {
+    if (n <= 1) return false;
+    for (int i = 2; i * i <= n; ++i) {
+        if (n % i == 0) return false;
+    }
+    return true;
+}
+
+void DataPreparation() {
+    std::cout << "[DataPreparation] Введіть числа (-1 для завершення):\n";
+    int num;
+    while (std::cin >> num && num != -1) {
+        {
+            std::lock_guard<std::mutex> lock(m);
+            data_queue.push(num);
+        }
+        cv.notify_one();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m);
+        done = true;
+    }
+    cv.notify_all();
+}
+
+void DataProcessing() {
+    while (true) {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait(lk, [] { return !data_queue.empty() || done; });
+
+        while (!data_queue.empty()) {
+            int val = data_queue.front();
+            data_queue.pop();
+            if (is_prime(val)) {
+                std::cout << "Знайдено просте число: " << val << "\n";
+            }
+        }
+
+        if (done && data_queue.empty()) break;
+    }
+}
+
+int main() {
+    std::thread t_prep(DataPreparation);
+    t_prep.detach();
+
+    DataProcessing();
+
+    return 0;
+}
+
+// ПУНКТ 1.2.5 
+#include <iostream>
+#include <future>
+#include <cmath>
+#include <chrono>
+#include <string>
+
+long long getNthPrime(int n) {
+    int count = 0;
+    long long num = 1;
+    while (count < n) {
+        num++;
+        bool prime = true;
+        for (long long i = 2; i * i <= num; ++i) {
+            if (num % i == 0) { prime = false; break; }
+        }
+        if (prime) count++;
+    }
+    return num;
+}
+
+void run_test(std::launch policy, const std::string& name, int n) {
+    std::cout << "\n Тест з " << name << " ---\n";
+    auto start = std::chrono::high_resolution_clock::now();
+
+    std::future<long long> f = std::async(policy, getNthPrime, n);
+
+    std::cout << "Поки йде/чекає обчислення, вирахуємо sqrt(" << n << "): " << std::sqrt(n) << "\n";
+
+    long long result = f.get();
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end - start;
+    std::cout << n << "-те просте число = " << result << "\n";
+    std::cout << "Загальний час виконання: " << diff.count() << " сек.\n";
+}
+
+int main() {
+    int n;
+    std::cout << "Введіть номер n (наприклад, 10000): ";
+    std::cin >> n;
+
+    run_test(std::launch::deferred, "std::launch::deferred", n);
+    run_test(std::launch::async, "std::launch::async", n);
+
+    return 0;
+}
+
+
+// ПУНКТ 1.2.6
+#include <iostream>
+#include <future>
+#include <deque>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <vector>
+
+long long getNthPrime(int n) {
+    int count = 0;
+    long long num = 1;
+    while (count < n) {
+        num++;
+        bool prime = true;
+        for (long long i = 2; i * i <= num; ++i) {
+            if (num % i == 0) { prime = false; break; }
+        }
+        if (prime) count++;
+    }
+    return num;
+}
+
+std::deque<std::packaged_task<long long()>> task_queue;
+std::deque<int> num_queue;
+std::mutex mtx;
+std::condition_variable cv;
+bool stop_worker = false;
+
+void Worker() {
+    while (true) {
+        std::packaged_task<long long()> task;
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv.wait(lk, [] { return !task_queue.empty() || stop_worker; });
+
+            if (stop_worker && task_queue.empty()) break;
+
+            task = std::move(task_queue.front());
+            task_queue.pop_front();
+        }
+        task();
+    }
+}
+
+int main() {
+    std::thread worker_thread(Worker);
+    std::vector<std::future<long long>> futures;
+    std::vector<int> requested_n;
+
+    std::cout << "Вводьте числа n (введіть 0 для завершення вводу):\n";
+    while (true) {
+        int n;
+        std::cout << "n = ";
+        std::cin >> n;
+        if (n <= 0) break;
+
+        std::packaged_task<long long()> task([n]() { return getNthPrime(n); });
+        futures.push_back(task.get_future());
+        requested_n.push_back(n);
+
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            task_queue.push_back(std::move(task));
+            num_queue.push_back(n);
+        }
+        cv.notify_one();
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        stop_worker = true;
+    }
+    cv.notify_all();
+
+    worker_thread.join();
+
+    std::cout << "\n--- Результати обчислень ---\n";
+    for (size_t idx = 0; idx < futures.size(); ++idx) {
+        std::cout << requested_n[idx] << "-те просте число: " << futures[idx].get() << "\n";
+    }
+
+    return 0;
+}
+
+// ПУНКТ 1.2.7
+#include <iostream>
+#include <future>
+#include <thread>
+#include <cmath>
+#include <chrono>
+
+long long getNthPrime(int n) {
+    int count = 0;
+    long long num = 1;
+    while (count < n) {
+        num++;
+        bool prime = true;
+        for (long long i = 2; i * i <= num; ++i) {
+            if (num % i == 0) { prime = false; break; }
+        }
+        if (prime) count++;
+    }
+    return num;
+}
+
+void Thread1(int n, std::promise<long long> p_nth, std::promise<long long> p_10nth, std::promise<bool> p_sync) {
+    long long prime_n = getNthPrime(n);
+    p_nth.set_value(prime_n);
+
+    p_sync.set_value(true);
+
+    long long prime_10n = getNthPrime(n * 10);
+    p_10nth.set_value(prime_10n);
+}
+
+void Thread2(int n, std::future<bool> f_sync) {
+    if (f_sync.get()) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::cout << "[Thread 2] sqrt(" << n << ") = " << std::sqrt(n) << "\n";
+    }
+}
+
+int main() {
+    int n;
+    std::cout << "Введіть n: ";
+    std::cin >> n;
+
+    std::promise<long long> p_nth;
+    std::promise<long long> p_10nth;
+    std::promise<bool> p_sync;
+
+    std::future<long long> f_nth = p_nth.get_future();
+    std::future<long long> f_10nth = p_10nth.get_future();
+    std::future<bool> f_sync = p_sync.get_future();
+
+    std::thread t1(Thread1, n, std::move(p_nth), std::move(p_10nth), std::move(p_sync));
+    std::thread t2(Thread2, n, std::move(f_sync));
+
+    std::cout << "[Main] " << n << "-те просте число: " << f_nth.get() << "\n";
+    std::cout << "[Main] " << (n * 10) << "-те просте число: " << f_10nth.get() << "\n";
+
+    t1.join();
+    t2.join();
+
+    return 0;
+}
+
 
